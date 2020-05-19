@@ -9,7 +9,7 @@ _______  ______ _____ _           _   ____                    _
 
 ```
 
-EXCELntDonut is a XLM (Excel 4.0) macro generator. Start with C# source code and end with a XLM (Excel 4.0) macro that will execute your code in memory. XLM (Excel 4.0) macros can be saved in .XLS files.
+EXCELntDonut is a XLM (Excel 4.0) macro generator. Start with C# source code (DLL or EXE) and end with a XLM (Excel 4.0) macro that will execute your code in memory. XLM (Excel 4.0) macros can be saved in .XLS files.
 
 ## Installation
 
@@ -31,8 +31,8 @@ If you'd like to run EXCELntDonut as just a python script, you'll need to setup 
 
 ```bash
 Usage:
-	$ EXCELntDonut -f dll_source.cs -c ClassName -m MethodName -r System.Management
-	$ EXCELntDonut -f exe_source.cs -r System.Management --sandbox --obfuscate
+	$ EXCELntDonut -f dll_source.cs -c ClassName -m MethodName -r System.Windows.Forms.dll
+	$ EXCELntDonut -f exe_source.cs -r System.Windows.Forms.dll --sandbox --obfuscate
 
 Flags:
 	(required)
@@ -58,7 +58,7 @@ Flags:
 
 ## How it works
 
-You provide a C# file containing your payload (like a DLL with a method that executes a cobalt strike beacon payload). That C# file is compiled using MCS into two .NET assemblies:  x86 and x64. After compilation, the awesome tool Donut converts each assembly into shellcode. Next, all nullbytes are removed, since XLM (Excel 4.0) macros don't play nicely with nullbytes and the payload is chunked into lines with no more than 255 characters.
+You provide a C# file containing your payload (like a DLL with a method that executes a cobalt strike beacon payload). That C# file is compiled using MCS into two .NET assemblies:  x86 and x64. After compilation, the awesome tool Donut converts each assembly into position independent shellcode. Next, all nullbytes are removed, since XLM (Excel 4.0) macros don't play nicely with nullbytes and the payload is chunked into lines with no more than 255 characters (for x86) or 10 characters (for x64).
 
 Once the shellcode is prepared, it's combined with basic process injection functions (VirtualAlloc, WriteProcessMemory and CreateThread) as well as an architecture check function to determine which payload (x86 or x64) to run on the target system. If you elect to execute sandbox checks or basic obfuscation, then those functions will update your macro. Finally, the output is placed in a CSV file (saved as .txt). 
 
@@ -90,20 +90,20 @@ These checks are based on what actual threat actors are using in their malware.
 ```
 =FORMULA(D3&D23&D54&D23&D44,E45)
 ```
-The FORMULA function allows us to place a formula, which can later be executed, into another cell. So in this case, we the process injection instructions and then use the FORMULA function to place the actual function into another cell to be executed. This avoids defenders conducting static analysis from seeing things like "VirtualAlloc".
+The FORMULA function allows us to place a formula, which can later be executed, into another cell. So in this case, we put the process injection instructions and then use the FORMULA function to place the actual function into another cell to be executed. This avoids defenders conducting static analysis from seeing things like "VirtualAlloc".
 
 2. The entire macro will shift some value to the right, so that when you initially open up the sheet with the macros, it appears blank.
 
 ## Things to know
 
-- Less sophisticated malware just uses the =EXEC() command to execute commands. Some also use URLMON to download files. Other even includes the word "SHELL". All of that seemed like a bad idea to us. This tool doesn't include any of that. Instead it injects your C# source code into the Excel process (either 32-bit or 64-bit) and then calls CreateThread to execute it. From there, it's up to your payload on what it does. We recommend PPID spoofing.
+- Less sophisticated payloads just uses the =EXEC() command to execute commands. Some also use URLMON to download files. Other files even includes the word "SHELL". All of that seemed like a bad idea to us. This tool doesn't include any of that. Instead it injects your C# source code into the Excel process (either 32-bit or 64-bit) and then executes. From there, it's up to your payload on what it does next. .
 
 ## Tips
 
-- Your C# source code could do anything you want it to. We recommend using a PPID Spoofing template to inject your code. That breaks the Parent > Child relationship between Excel and whatever you spawn into. WMIPrivSe is a potential option.
+- Your C# source code could do anything you want it to. We recommend your source code break the Parent > Child relationship between Excel and whatever you spawn into. 
 - There's a lot of good blog posts about "Very Hidden" excel sheets. Consider using that.
 - Don't forget to make your Excel file look real.
-- Huge source code files might slow the tool down a ton (specifically during nullbyte removal with msfvenom). Also, the max payload lines in excel is set to 999, but that could be manually extended by editing the source code.
+- Huge source code files might slow the tool down a ton (specifically during nullbyte removal with msfvenom). Also, if you're targeting a x64 version of Excel, consider a staged payload since the injection process is quite slow.
 
 ## Troubleshooting
 
@@ -171,6 +171,12 @@ error CS5001: Program `_excelntdonut_GJAoNuVPMcX.exe' does not contain a static 
 
 This error typically occurs when you supply source code for a DLL, but don't specify a class and method name to be called. When the tool does not see "-c" class and "-m" method arguments, it will assume you're trying to compile an exe and will spit out this error. Either convert your file to an EXE and put the payload in Main() method OR even easier, just add a -c and -m argument.
 
+###### General Troubleshooting Advice
+
+1. First, compile your C# source code using csc on windows and execute to verify that the payload works. Test this out by compiling to x86 and x64 payloads, since it's likely you won't know if your target environment operates 32-bit or 64-bit Excel.
+2. You should be able to run your payload multiple times in the same process, but if you're getting weird errors, exit it out of Excel, re-open and retry. 
+3. When in doubt, close out of Excel and create a new file to test from. 
+
 ## Detection
 - Here are some Yara rules to start with by @InQuest:
 
@@ -188,12 +194,13 @@ There's a lot of posts about using OLEDUMP.py to review XLM files. Consider this
 2. AMSI unfortunately doesn't help here.
 3. ASR Rules...we're not sure.
 4. Most users send .xlsx files these days. Perhaps block .xls files from being sent to your employees' inboxes. It wouldn't be outrageous to request someone re-send a file saved as .xlsx.
+5. The most recent version of Defender ATP caught the unobfuscated version of this file when dropped to disk. 
 
 ## Acknowledgments 
 
-This wouldn't even be on our radar without the fantastic work done by the folks at Outflank (@outflanknl). Special thanks to @StanHacked for his insight during this project. Also, equally, this project would not be possible without Donut (by @TheWover and @odzhan) and the related python library (by @byt3bl33d3r).
+This wouldn't even be on our radar without the fantastic work done by the folks at Outflank (@outflanknl). Special thanks to @StanHacked for his insight during this project. Also, equally, this project would not be possible without Donut (by @TheWover and @odzhan) and the related python library (by @byt3bl33d3r). Finally, thanks to Philip Tsukerman with Cybereason for the awesome research on making XLM macros compatible with 64-bit versions of Excel.
 
 ## Disclaimer
 
-We are not responsible for misuse of this tool. This tool was generated for educational and authorized-testing purposes to demonstrate how  C# source code can be injected into memory using a XLM (Excel 4.0) macro. The ultimate goal of this project is to (1) provide red teamers another phishing payload option to emulate what actual adverseries are currently using, and (2) provide defenders a frame of reference for building analytics and mitigations. Without a tool to quickly generate this type of payload, we believe defenders will not be adequately prepared for what's actually coming their way. Please act responsibly. 
+We are not responsible for misuse of this tool. This tool was generated for educational and authorized-testing purposes to demonstrate how  C# source code can be injected into memory using a XLM (Excel 4.0) macro. The ultimate goal of this project is to (1) provide red teamers another phishing payload option to emulate what actual adversaries are currently using, and (2) provide defenders a frame of reference for building analytics and mitigations. Without a tool to quickly generate this type of payload, we believe defenders will not be adequately prepared for what's actually coming their way. Please act responsibly. 
 
