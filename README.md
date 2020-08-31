@@ -9,7 +9,7 @@ _______  ______ _____ _           _   ____                    _
 
 ```
 
-EXCELntDonut is a XLM (Excel 4.0) macro generator. Start with C# source code (DLL or EXE) and end with a XLM (Excel 4.0) macro that will execute your code in memory. XLM (Excel 4.0) macros can be saved in .XLS files.
+EXCELntDonut is a XLM (Excel 4.0) macro generator. Start with C# source code (EXE) and end with a XLM (Excel 4.0) macro that will execute your code in memory. XLM (Excel 4.0) macros can be saved in .XLS files.
 
 ## Installation
 
@@ -31,19 +31,11 @@ If you'd like to run EXCELntDonut as just a python script, you'll need to setup 
 
 ```bash
 Usage:
-	$ EXCELntDonut -f dll_source.cs -c ClassName -m MethodName -r System.Windows.Forms.dll
 	$ EXCELntDonut -f exe_source.cs -r System.Windows.Forms.dll --sandbox --obfuscate
 
 Flags:
 	(required)
-	-f path to file containing your C# soure code (can be for an exe or dll)
-
-	(required for DLL source code)
-	-c ClassName where method that you want to call lives
-	*NOTE* The class must be marked as public.
-
-	-m Method containing your executable payload
-	*NOTE* The method must be marked as public and static.
+	-f path to file containing your C# soure code (exe only)
 
 	-r References needed to compile your C# code (same ones for when using mcs to compile on Linux)
 	(ex: -r 'System.Management')
@@ -58,7 +50,7 @@ Flags:
 
 ## How it works
 
-You provide a C# file containing your payload (like a DLL with a method that executes a cobalt strike beacon payload). That C# file is compiled using MCS into two .NET assemblies:  x86 and x64. After compilation, the awesome tool Donut converts each assembly into position independent shellcode. Next, all nullbytes are removed, since XLM (Excel 4.0) macros don't play nicely with nullbytes and the payload is chunked into lines with no more than 255 characters (for x86) or 10 characters (for x64).
+You provide a C# file containing your payload (like an EXE with a main method that executes a cobalt strike beacon payload). That C# file is compiled using MCS into two .NET assemblies:  x86 and x64. After compilation, the awesome tools Donut (for x86) and CLRvoyance (for x64) convert each assembly into position independent shellcode. Next, all nullbytes are removed, since XLM (Excel 4.0) macros don't play nicely with nullbytes and the payload is chunked into lines with no more than 255 characters (for x86) or 10 characters (for x64).
 
 Once the shellcode is prepared, it's combined with basic process injection functions (VirtualAlloc, WriteProcessMemory and CreateThread) as well as an architecture check function to determine which payload (x86 or x64) to run on the target system. If you elect to execute sandbox checks or basic obfuscation, then those functions will update your macro. Finally, the output is placed in a CSV file (saved as .txt). 
 
@@ -103,7 +95,6 @@ The FORMULA function allows us to place a formula, which can later be executed, 
 - Your C# source code could do anything you want it to. We recommend your source code break the Parent > Child relationship between Excel and whatever you spawn into. 
 - There's a lot of good blog posts about "Very Hidden" excel sheets. Consider using that.
 - Don't forget to make your Excel file look real.
-- Huge source code files might slow the tool down a ton (specifically during nullbyte removal with msfvenom). Also, if you're targeting a x64 version of Excel, consider a staged payload since the injection process is quite slow.
 
 ## Troubleshooting
 
@@ -169,7 +160,7 @@ error CS5001: Program `_excelntdonut_GJAoNuVPMcX.exe' does not contain a static 
 
 ```
 
-This error typically occurs when you supply source code for a DLL, but don't specify a class and method name to be called. When the tool does not see "-c" class and "-m" method arguments, it will assume you're trying to compile an exe and will spit out this error. Either convert your file to an EXE and put the payload in Main() method OR even easier, just add a -c and -m argument.
+At the moment, EXCELntDonut only allows C# files with payloads in the Main function. 
 
 ###### General Troubleshooting Advice
 
@@ -198,9 +189,13 @@ There's a lot of posts about using OLEDUMP.py to review XLM files. Consider this
 
 ## Acknowledgments 
 
-This wouldn't even be on our radar without the fantastic work done by the folks at Outflank (@outflanknl). Special thanks to @StanHacked for his insight during this project. Also, equally, this project would not be possible without Donut (by @TheWover and @odzhan) and the related python library (by @byt3bl33d3r). Finally, thanks to Philip Tsukerman with Cybereason for the awesome research on making XLM macros compatible with 64-bit versions of Excel.
+This wouldn't even be on our radar without the fantastic work done by the folks at Outflank (@outflanknl). Special thanks to @StanHacked for his insight during this project. Also, equally, this project would not be possible without Donut (by @TheWover and @odzhan) and the related python library (by @byt3bl33d3r). Related, the team at Accenture created CLRvoyance, which solved some x64 issues we couldn't figure out with Donut + XLM 4.0 macros. Finally, thanks to Philip Tsukerman with Cybereason for the awesome research on making XLM macros compatible with 64-bit versions of Excel.
 
 ## Disclaimer
 
 We are not responsible for misuse of this tool. This tool was generated for educational and authorized-testing purposes to demonstrate how  C# source code can be injected into memory using a XLM (Excel 4.0) macro. The ultimate goal of this project is to (1) provide red teamers another phishing payload option to emulate what actual adversaries are currently using, and (2) provide defenders a frame of reference for building analytics and mitigations. Without a tool to quickly generate this type of payload, we believe defenders will not be adequately prepared for what's actually coming their way. Please act responsibly. 
+
+## License
+
+Please see the license file in this folder. Please note that this tool incorporates two other open source tools including Donut and CLRvoyance. 
 

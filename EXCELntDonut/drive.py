@@ -6,6 +6,7 @@ import argparse
 from shutil import which
 import pandas as pd
 from io import StringIO
+import struct
 
 '''
 Usage: 
