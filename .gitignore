@@ -1,3 +1,5 @@
-EXCELntDonut.egg-info/
-EXCELntDonut/__pycache__/
-templates/excelntdonut.txt
+/env
+*.egg-info
+__pycache__/*
+__pycache__/
+*.bak
